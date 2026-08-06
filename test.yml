@@ -1,0 +1,22 @@
+---
+- name: Semaphore Test
+  hosts: ubuntu
+  gather_facts: yes
+
+  tasks:
+    - name: Ping host
+      ansible.builtin.ping:
+
+    - name: Show hostname
+      command: hostname
+      register: hostname
+
+    - debug:
+        var: hostname.stdout
+
+    - name: Create a file
+      copy:
+        dest: /tmp/semaphore-test.txt
+        content: |
+          Semaphore is working!
+          Host: {{ ansible_hostname }}
