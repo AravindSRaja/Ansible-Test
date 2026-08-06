@@ -1,0 +1,12 @@
+---
+- name: Test become
+  hosts: all
+  become: yes
+
+  tasks:
+    - name: Show current user
+      command: whoami
+      register: who
+
+    - debug:
+        var: who.stdout
