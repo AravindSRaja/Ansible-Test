@@ -1,0 +1,9 @@
+---
+- hosts: all
+  become: yes
+
+  tasks:
+    - name: Create file in /root
+      copy:
+        dest: /root/test.txt
+        content: "Hello"
