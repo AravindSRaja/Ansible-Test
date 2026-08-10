@@ -1,20 +1,19 @@
 ---
 - name: Apply CIS hardening
-  hosts: ubuntu_servers
+  hosts: ubuntu
   become: true
   gather_facts: false
 
   tasks:
-
     - name: Copy CIS remediation script
       ansible.builtin.copy:
-        src: new_bash_remediation.sh
+        src: bash_remediation2404.sh
         dest: /tmp/cis-remediation.sh
-        mode: '0700'
         owner: root
         group: root
+        mode: '0700'
 
-    - name: Execute CIS remediation script
+    - name: Execute CIS remediation
       ansible.builtin.command:
         cmd: /tmp/cis-remediation.sh
       register: remediation_result
