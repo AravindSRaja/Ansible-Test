@@ -1,0 +1,33 @@
+---
+- name: Apply CIS hardening
+  hosts: ubuntu
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Copy CIS remediation script
+      ansible.builtin.copy:
+        src: 2204-remediation.sh
+        dest: /tmp/cis-remediation.sh
+        owner: root
+        group: root
+        mode: '0700'
+
+    - name: Execute CIS remediation
+      ansible.builtin.command:
+        cmd: /tmp/cis-remediation.sh
+      register: remediation_result
+
+    - name: Display remediation output
+      ansible.builtin.debug:
+        var: remediation_result.stdout_lines
+
+    - name: Display remediation errors
+      ansible.builtin.debug:
+        var: remediation_result.stderr_lines
+      when: remediation_result.stderr_lines | length > 0
+
+    - name: Remove remediation script
+      ansible.builtin.file:
+        path: /tmp/cis-remediation.sh
+        state: absent
