@@ -5,21 +5,56 @@
   gather_facts: true
 
   vars:
-    profile: xccdf_org.ssgproject.content_profile_cis_level1_server
+    cis_profile: xccdf_org.ssgproject.content_profile_cis_level1_server
+
     scan_dir: /var/lib/oscap
+
     results_file: "{{ scan_dir }}/cis-l1-results-{{ inventory_hostname }}.xml"
     report_file: "{{ scan_dir }}/cis-l1-report-{{ inventory_hostname }}.html"
 
+    # Files will be downloaded to the Semaphore/Ansible controller
+    local_results_dir: "./oscap-results/"
+    local_reports_dir: "./oscap-reports/"
+
   tasks:
 
-    # ---------------------------------------------------------
-    # 1. Install OpenSCAP and SCAP Security Guide
-    # ---------------------------------------------------------
+    # ============================================================
+    # 1. Display target information
+    # ============================================================
 
-    - name: Update apt cache
+    - name: Display target operating system
+      ansible.builtin.debug:
+        msg:
+          - "Hostname: {{ ansible_facts['hostname'] }}"
+          - "OS: {{ ansible_facts['distribution'] }}"
+          - "Version: {{ ansible_facts['distribution_version'] }}"
+          - "Architecture: {{ ansible_facts['architecture'] }}"
+
+    # ============================================================
+    # 2. Verify Ubuntu
+    # ============================================================
+
+    - name: Verify target is Ubuntu
+      ansible.builtin.assert:
+        that:
+          - ansible_facts['distribution'] == "Ubuntu"
+        fail_msg: >-
+          This playbook is intended for Ubuntu.
+          Detected: {{ ansible_facts['distribution'] }}
+          {{ ansible_facts['distribution_version'] }}
+
+    # ============================================================
+    # 3. Update APT
+    # ============================================================
+
+    - name: Update APT cache
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
+
+    # ============================================================
+    # 4. Install OpenSCAP and SCAP Security Guide
+    # ============================================================
 
     - name: Install OpenSCAP and SCAP Security Guide
       ansible.builtin.apt:
@@ -29,9 +64,9 @@
           - ssg-debderived
         state: present
 
-    # ---------------------------------------------------------
-    # 2. Verify OpenSCAP installation
-    # ---------------------------------------------------------
+    # ============================================================
+    # 5. Verify OpenSCAP installation
+    # ============================================================
 
     - name: Check OpenSCAP version
       ansible.builtin.command:
@@ -41,52 +76,108 @@
 
     - name: Display OpenSCAP version
       ansible.builtin.debug:
-        var: oscap_version.stdout
+        var: oscap_version.stdout_lines
 
-    # ---------------------------------------------------------
-    # 3. Determine the SSG datastream
-    # ---------------------------------------------------------
+    # ============================================================
+    # 6. Find installed Ubuntu SSG datastream
+    # ============================================================
 
-    - name: Set Ubuntu 24.04 datastream
+    - name: Find Ubuntu SSG datastream
+      ansible.builtin.find:
+        paths: /usr/share/xml/scap/ssg/content
+        patterns:
+          - "ssg-ubuntu*-ds.xml"
+        file_type: file
+      register: ssg_datastreams
+
+    - name: Display discovered SSG datastreams
+      ansible.builtin.debug:
+        msg: "{{ ssg_datastreams.files | map(attribute='path') | list }}"
+
+    # ============================================================
+    # 7. Verify datastream was found
+    # ============================================================
+
+    - name: Verify SSG datastream exists
+      ansible.builtin.assert:
+        that:
+          - ssg_datastreams.files | length > 0
+        fail_msg: >-
+          No Ubuntu SSG datastream was found under
+          /usr/share/xml/scap/ssg/content
+
+    # ============================================================
+    # 8. Select appropriate datastream
+    # ============================================================
+
+    - name: Select Ubuntu 24.04 datastream
       ansible.builtin.set_fact:
-        datastream: /usr/share/xml/scap/ssg/content/ssg-ubuntu2404-ds.xml
-      when:
-        - ansible_distribution == "Ubuntu"
-        - ansible_distribution_version is version('24.04', '==')
+        datastream: >-
+          {{
+            (
+              ssg_datastreams.files
+              | map(attribute='path')
+              | select('search', 'ubuntu2404')
+              | list
+            )[0]
+          }}
+      when: ansible_facts['distribution_version'] is version('24.04', '==')
 
-    - name: Set Ubuntu 22.04 datastream
+    - name: Select Ubuntu 22.04 datastream
       ansible.builtin.set_fact:
-        datastream: /usr/share/xml/scap/ssg/content/ssg-ubuntu2204-ds.xml
-      when:
-        - ansible_distribution == "Ubuntu"
-        - ansible_distribution_version is version('22.04', '==')
+        datastream: >-
+          {{
+            (
+              ssg_datastreams.files
+              | map(attribute='path')
+              | select('search', 'ubuntu2204')
+              | list
+            )[0]
+          }}
+      when: ansible_facts['distribution_version'] is version('22.04', '==')
 
-    - name: Verify supported Ubuntu version
+    # ============================================================
+    # 9. Verify correct datastream for OS version
+    # ============================================================
+
+    - name: Verify correct Ubuntu datastream exists
       ansible.builtin.assert:
         that:
           - datastream is defined
-        fail_msg: "Unsupported Ubuntu version: {{ ansible_distribution_version }}"
+          - datastream | length > 0
+        fail_msg: >-
+          No matching SSG datastream was found for Ubuntu
+          {{ ansible_facts['distribution_version'] }}.
 
-    # ---------------------------------------------------------
-    # 4. Verify datastream exists
-    # ---------------------------------------------------------
+    - name: Display selected datastream
+      ansible.builtin.debug:
+        msg: "Using SSG datastream: {{ datastream }}"
 
-    - name: Check SSG datastream
-      ansible.builtin.stat:
-        path: "{{ datastream }}"
-      register: datastream_file
+    # ============================================================
+    # 10. Verify CIS Level 1 profile exists
+    # ============================================================
 
-    - name: Verify SSG datastream
+    - name: Check CIS Level 1 profile
+      ansible.builtin.command:
+        cmd: >
+          oscap info
+          {{ datastream }}
+      register: oscap_info
+      changed_when: false
+
+    - name: Verify CIS Level 1 profile is available
       ansible.builtin.assert:
         that:
-          - datastream_file.stat.exists
-        fail_msg: "SSG datastream not found: {{ datastream }}"
+          - cis_profile in oscap_info.stdout
+        fail_msg: >-
+          CIS Level 1 profile was not found in:
+          {{ datastream }}
 
-    # ---------------------------------------------------------
-    # 5. Create report directory
-    # ---------------------------------------------------------
+    # ============================================================
+    # 11. Create scan directory
+    # ============================================================
 
-    - name: Create OpenSCAP result directory
+    - name: Create OpenSCAP scan directory
       ansible.builtin.file:
         path: "{{ scan_dir }}"
         state: directory
@@ -94,15 +185,15 @@
         group: root
         mode: '0700'
 
-    # ---------------------------------------------------------
-    # 6. Run CIS Level 1 assessment
-    # ---------------------------------------------------------
+    # ============================================================
+    # 12. Run OpenSCAP CIS Level 1 scan
+    # ============================================================
 
     - name: Run CIS Level 1 OpenSCAP assessment
       ansible.builtin.command:
         cmd: >
           oscap xccdf eval
-          --profile {{ profile }}
+          --profile {{ cis_profile }}
           --results {{ results_file }}
           --report {{ report_file }}
           {{ datastream }}
@@ -110,64 +201,95 @@
       changed_when: false
       failed_when: oscap_scan.rc not in [0, 2]
 
-    # ---------------------------------------------------------
-    # 7. Display scan summary
-    # ---------------------------------------------------------
+    # ============================================================
+    # 13. Display scan output
+    # ============================================================
 
     - name: Display OpenSCAP scan output
       ansible.builtin.debug:
         var: oscap_scan.stdout_lines
 
-    - name: Display OpenSCAP warnings/errors
+    - name: Display OpenSCAP errors/warnings
       ansible.builtin.debug:
         var: oscap_scan.stderr_lines
-      when: oscap_scan.stderr_lines | length > 0
+      when:
+        - oscap_scan.stderr_lines is defined
+        - oscap_scan.stderr_lines | length > 0
 
-    # ---------------------------------------------------------
-    # 8. Verify generated files
-    # ---------------------------------------------------------
+    - name: Display OpenSCAP return code
+      ansible.builtin.debug:
+        msg: "OpenSCAP return code: {{ oscap_scan.rc }}"
 
-    - name: Check scan results
+    # ============================================================
+    # 14. Verify result files
+    # ============================================================
+
+    - name: Check XML result file
       ansible.builtin.stat:
         path: "{{ results_file }}"
-      register: results_file_stat
+      register: results_stat
 
     - name: Check HTML report
       ansible.builtin.stat:
         path: "{{ report_file }}"
-      register: report_file_stat
+      register: report_stat
 
-    - name: Verify scan files
+    - name: Verify OpenSCAP result files
       ansible.builtin.assert:
         that:
-          - results_file_stat.stat.exists
-          - report_file_stat.stat.exists
-        fail_msg: "OpenSCAP did not generate the expected result/report files."
+          - results_stat.stat.exists
+          - report_stat.stat.exists
+          - results_stat.stat.size > 0
+          - report_stat.stat.size > 0
+        fail_msg: "OpenSCAP did not generate valid result/report files."
 
-    # ---------------------------------------------------------
-    # 9. Fetch results back to Semaphore/controller
-    # ---------------------------------------------------------
+    # ============================================================
+    # 15. Display generated files
+    # ============================================================
 
-    - name: Download OpenSCAP XML results
+    - name: Display generated report information
+      ansible.builtin.debug:
+        msg:
+          - "XML results: {{ results_file }}"
+          - "HTML report: {{ report_file }}"
+          - "XML size: {{ results_stat.stat.size }} bytes"
+          - "HTML size: {{ report_stat.stat.size }} bytes"
+
+    # ============================================================
+    # 16. Fetch XML results to Semaphore/controller
+    # ============================================================
+
+    - name: Fetch XML results
       ansible.builtin.fetch:
         src: "{{ results_file }}"
-        dest: "./oscap-results/"
+        dest: "{{ local_results_dir }}"
         flat: true
 
-    - name: Download OpenSCAP HTML report
+    # ============================================================
+    # 17. Fetch HTML report to Semaphore/controller
+    # ============================================================
+
+    - name: Fetch HTML report
       ansible.builtin.fetch:
         src: "{{ report_file }}"
-        dest: "./oscap-reports/"
+        dest: "{{ local_reports_dir }}"
         flat: true
 
-    # ---------------------------------------------------------
-    # 10. Final message
-    # ---------------------------------------------------------
+    # ============================================================
+    # 18. Final status
+    # ============================================================
 
     - name: Assessment completed
       ansible.builtin.debug:
         msg:
-          - "OpenSCAP assessment completed on {{ inventory_hostname }}"
-          - "Profile: {{ profile }}"
-          - "Results: {{ results_file }}"
-          - "Report: {{ report_file }}"
+          - "=============================================="
+          - "CIS Level 1 Assessment Completed"
+          - "=============================================="
+          - "Server: {{ inventory_hostname }}"
+          - "OS: Ubuntu {{ ansible_facts['distribution_version'] }}"
+          - "Profile: {{ cis_profile }}"
+          - "Datastream: {{ datastream }}"
+          - "OpenSCAP RC: {{ oscap_scan.rc }}"
+          - "XML: {{ results_file }}"
+          - "HTML: {{ report_file }}"
+          - "=============================================="
