@@ -10,8 +10,6 @@
     # Fixed Ubuntu 22.04 CIS Level 1 configuration
     # ============================================================
 
-    ssg_version: "0.1.81"
-
     cis_profile: "xccdf_org.ssgproject.content_profile_cis_level1_server"
 
     ssg_dir: "/usr/share/xml/scap/ssg/content"
@@ -24,11 +22,7 @@
 
     report_file: "{{ scan_dir }}/cis-l1-report-{{ inventory_hostname }}.html"
 
-    ssg_zip: "/tmp/scap-security-guide-{{ ssg_version }}.zip"
-
-    ssg_download_url: >-
-      https://github.com/ComplianceAsCode/content/releases/download/v{{ ssg_version }}/scap-security-guide-{{ ssg_version }}.zip
-
+    # Semaphore/controller locations
     local_results_dir: "./oscap-results/"
 
     local_reports_dir: "./oscap-reports/"
@@ -37,7 +31,7 @@
   tasks:
 
     # ============================================================
-    # 1. Verify target is Ubuntu 22.04
+    # 1. Verify Ubuntu 22.04
     # ============================================================
 
     - name: Check Ubuntu version
@@ -45,6 +39,7 @@
         cmd: grep '^VERSION_ID=' /etc/os-release
       register: ubuntu_version
       changed_when: false
+
 
     - name: Verify Ubuntu 22.04
       ansible.builtin.assert:
@@ -56,7 +51,18 @@
 
 
     # ============================================================
-    # 2. Install OpenSCAP and required utilities
+    # 2. Enable Universe repository
+    # ============================================================
+
+    - name: Enable Universe repository
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu jammy universe"
+        state: present
+        filename: ubuntu-universe
+
+
+    # ============================================================
+    # 3. Update APT cache
     # ============================================================
 
     - name: Update APT cache
@@ -64,17 +70,49 @@
         update_cache: true
         cache_valid_time: 3600
 
-    - name: Install OpenSCAP and utilities
+
+    # ============================================================
+    # 4. Verify OpenSCAP package availability
+    # ============================================================
+
+    - name: Check OpenSCAP package availability
+      ansible.builtin.command:
+        cmd: apt-cache policy openscap-scanner
+      register: openscap_package
+      changed_when: false
+
+
+    - name: Display OpenSCAP package information
+      ansible.builtin.debug:
+        var: openscap_package.stdout_lines
+
+
+    - name: Verify OpenSCAP package is available
+      ansible.builtin.assert:
+        that:
+          - "'Candidate: (none)' not in openscap_package.stdout"
+        fail_msg: >-
+          openscap-scanner is not available from the configured
+          Ubuntu 22.04 repositories.
+
+
+    # ============================================================
+    # 5. Install OpenSCAP
+    # ============================================================
+
+    - name: Install OpenSCAP and required utilities
       ansible.builtin.apt:
         name:
           - openscap-scanner
+          - ssg-base
+          - ssg-debderived
           - unzip
           - curl
         state: present
 
 
     # ============================================================
-    # 3. Verify OpenSCAP
+    # 6. Verify OpenSCAP installation
     # ============================================================
 
     - name: Check OpenSCAP version
@@ -83,26 +121,34 @@
       register: oscap_version
       changed_when: false
 
+
     - name: Display OpenSCAP version
       ansible.builtin.debug:
         var: oscap_version.stdout_lines
 
 
     # ============================================================
-    # 4. Create SSG directory
+    # 7. Verify SSG directory
     # ============================================================
 
-    - name: Create SSG content directory
-      ansible.builtin.file:
+    - name: Check SSG content directory
+      ansible.builtin.stat:
         path: "{{ ssg_dir }}"
-        state: directory
-        owner: root
-        group: root
-        mode: "0755"
+      register: ssg_directory
+
+
+    - name: Verify SSG content directory exists
+      ansible.builtin.assert:
+        that:
+          - ssg_directory.stat.exists
+          - ssg_directory.stat.isdir
+        fail_msg: >-
+          SSG content directory was not found:
+          {{ ssg_dir }}
 
 
     # ============================================================
-    # 5. Check whether Ubuntu 22.04 datastream exists
+    # 8. Verify Ubuntu 22.04 datastream
     # ============================================================
 
     - name: Check Ubuntu 22.04 SSG datastream
@@ -111,78 +157,35 @@
       register: datastream_stat
 
 
-    # ============================================================
-    # 6. Download upstream SSG content
-    # ============================================================
-
-    - name: Download SCAP Security Guide
-      ansible.builtin.get_url:
-        url: "{{ ssg_download_url }}"
-        dest: "{{ ssg_zip }}"
-        mode: "0644"
-        timeout: 120
-      when: not datastream_stat.stat.exists
+    - name: Display datastream status
+      ansible.builtin.debug:
+        msg:
+          - "Datastream: {{ datastream }}"
+          - "Exists: {{ datastream_stat.stat.exists }}"
 
 
-    # ============================================================
-    # 7. Extract Ubuntu 22.04 datastream
-    # ============================================================
-
-    - name: Extract Ubuntu 22.04 SSG datastream
-      ansible.builtin.command:
-        cmd: >
-          unzip -j -o
-          "{{ ssg_zip }}"
-          "*/ssg-ubuntu2204-ds.xml"
-          -d "{{ ssg_dir }}"
-      when: not datastream_stat.stat.exists
-
-
-    # ============================================================
-    # 8. Verify datastream
-    # ============================================================
-
-    - name: Verify Ubuntu 22.04 datastream
-      ansible.builtin.stat:
-        path: "{{ datastream }}"
-      register: datastream_final
-
-
-    - name: Ensure Ubuntu 22.04 datastream exists
+    - name: Verify Ubuntu 22.04 datastream exists
       ansible.builtin.assert:
         that:
-          - datastream_final.stat.exists
-          - datastream_final.stat.size > 0
+          - datastream_stat.stat.exists
+          - datastream_stat.stat.size > 0
         fail_msg: >-
           Ubuntu 22.04 SSG datastream was not found:
           {{ datastream }}
 
 
     # ============================================================
-    # 9. Display fixed scan configuration
+    # 9. Verify CIS Level 1 profile
     # ============================================================
 
-    - name: Display scan configuration
-      ansible.builtin.debug:
-        msg:
-          - "OS              : Ubuntu 22.04"
-          - "SSG Version     : {{ ssg_version }}"
-          - "Datastream      : {{ datastream }}"
-          - "CIS Profile     : {{ cis_profile }}"
-
-
-    # ============================================================
-    # 10. Verify CIS Level 1 profile exists
-    # ============================================================
-
-    - name: Check CIS Level 1 profile
+    - name: Get SSG datastream information
       ansible.builtin.command:
         cmd: oscap info "{{ datastream }}"
       register: oscap_info
       changed_when: false
 
 
-    - name: Verify CIS Level 1 profile
+    - name: Verify CIS Level 1 profile exists
       ansible.builtin.assert:
         that:
           - cis_profile in oscap_info.stdout
@@ -191,8 +194,16 @@
           {{ datastream }}
 
 
+    - name: Display selected CIS profile
+      ansible.builtin.debug:
+        msg:
+          - "OS: Ubuntu 22.04"
+          - "Datastream: {{ datastream }}"
+          - "Profile: {{ cis_profile }}"
+
+
     # ============================================================
-    # 11. Create scan directory
+    # 10. Create OpenSCAP result directory
     # ============================================================
 
     - name: Create OpenSCAP scan directory
@@ -205,13 +216,14 @@
 
 
     # ============================================================
-    # 12. Remove previous reports
+    # 11. Remove previous results
     # ============================================================
 
     - name: Remove previous XML result
       ansible.builtin.file:
         path: "{{ results_file }}"
         state: absent
+
 
     - name: Remove previous HTML report
       ansible.builtin.file:
@@ -220,10 +232,10 @@
 
 
     # ============================================================
-    # 13. Run CIS Level 1 scan
+    # 12. Run CIS Level 1 assessment
     # ============================================================
 
-    - name: Run Ubuntu 22.04 CIS Level 1 assessment
+    - name: Run Ubuntu 22.04 CIS Level 1 OpenSCAP assessment
       ansible.builtin.command:
         cmd: >
           oscap xccdf eval
@@ -235,7 +247,7 @@
       changed_when: false
 
       # OpenSCAP:
-      # 0 = scan completed without failures
+      # 0 = scan completed successfully
       # 2 = scan completed with findings
       # Other values = execution/error condition
 
@@ -243,7 +255,7 @@
 
 
     # ============================================================
-    # 14. Display scan output
+    # 13. Display scan output
     # ============================================================
 
     - name: Display OpenSCAP scan output
@@ -252,7 +264,7 @@
 
 
     # ============================================================
-    # 15. Display OpenSCAP warnings/errors
+    # 14. Display warnings/errors
     # ============================================================
 
     - name: Display OpenSCAP stderr
@@ -264,7 +276,7 @@
 
 
     # ============================================================
-    # 16. Display scan return code
+    # 15. Display return code
     # ============================================================
 
     - name: Display OpenSCAP return code
@@ -273,7 +285,7 @@
 
 
     # ============================================================
-    # 17. Verify XML result
+    # 16. Verify XML result
     # ============================================================
 
     - name: Check XML result
@@ -283,7 +295,7 @@
 
 
     # ============================================================
-    # 18. Verify HTML report
+    # 17. Verify HTML report
     # ============================================================
 
     - name: Check HTML report
@@ -293,21 +305,22 @@
 
 
     # ============================================================
-    # 19. Validate reports
+    # 18. Verify reports
     # ============================================================
 
-    - name: Verify reports were generated
+    - name: Verify OpenSCAP reports were generated
       ansible.builtin.assert:
         that:
           - results_stat.stat.exists
           - report_stat.stat.exists
           - results_stat.stat.size > 0
           - report_stat.stat.size > 0
-        fail_msg: "OpenSCAP did not generate the expected reports."
+        fail_msg: >-
+          OpenSCAP did not generate the expected XML and HTML reports.
 
 
     # ============================================================
-    # 20. Display report information
+    # 19. Display report information
     # ============================================================
 
     - name: Display generated report information
@@ -318,7 +331,7 @@
           - "=============================================="
           - "Server       : {{ inventory_hostname }}"
           - "OS           : Ubuntu 22.04"
-          - "SSG Version  : {{ ssg_version }}"
+          - "Datastream   : {{ datastream }}"
           - "Profile      : {{ cis_profile }}"
           - "XML Result   : {{ results_file }}"
           - "HTML Report  : {{ report_file }}"
@@ -329,7 +342,7 @@
 
 
     # ============================================================
-    # 21. Fetch XML report to Semaphore
+    # 20. Fetch XML results to Semaphore
     # ============================================================
 
     - name: Fetch XML results to Semaphore
@@ -340,7 +353,7 @@
 
 
     # ============================================================
-    # 22. Fetch HTML report to Semaphore
+    # 21. Fetch HTML report to Semaphore
     # ============================================================
 
     - name: Fetch HTML report to Semaphore
@@ -351,12 +364,16 @@
 
 
     # ============================================================
-    # 23. Final status
+    # 22. Final status
     # ============================================================
 
     - name: Assessment completed
       ansible.builtin.debug:
         msg:
-          - "CIS Level 1 assessment completed."
+          - "=============================================="
+          - "ASSESSMENT COMPLETED"
+          - "=============================================="
+          - "CIS Level 1 assessment completed on {{ inventory_hostname }}."
           - "HTML report fetched to Semaphore."
           - "XML results fetched to Semaphore."
+          - "=============================================="
