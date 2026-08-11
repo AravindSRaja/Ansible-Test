@@ -56,13 +56,52 @@
 
 
     # ============================================================
-    # 2. Install OpenSCAP and required utilities
+    # 2. Enable Universe repository
+    # ============================================================
+
+    - name: Enable Universe repository
+      ansible.builtin.apt_repository:
+        repo: "deb http://archive.ubuntu.com/ubuntu noble universe"
+        state: present
+        filename: ubuntu-universe
+
+
+    # ============================================================
+    # 3. Update APT cache
     # ============================================================
 
     - name: Update APT cache
       ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
+
+
+    # ============================================================
+    # 4. Verify OpenSCAP package availability
+    # ============================================================
+
+    - name: Check OpenSCAP package availability
+      ansible.builtin.command:
+        cmd: apt-cache policy openscap-scanner
+      register: openscap_package
+      changed_when: false
+
+    - name: Display OpenSCAP package information
+      ansible.builtin.debug:
+        var: openscap_package.stdout_lines
+
+    - name: Verify OpenSCAP package is available
+      ansible.builtin.assert:
+        that:
+          - "'Candidate: (none)' not in openscap_package.stdout"
+        fail_msg: >-
+          openscap-scanner is not available from the configured
+          Ubuntu 24.04 repositories.
+
+
+    # ============================================================
+    # 5. Install OpenSCAP and required utilities
+    # ============================================================
 
     - name: Install OpenSCAP and utilities
       ansible.builtin.apt:
@@ -74,7 +113,7 @@
 
 
     # ============================================================
-    # 3. Verify OpenSCAP
+    # 6. Verify OpenSCAP
     # ============================================================
 
     - name: Check OpenSCAP version
@@ -89,7 +128,7 @@
 
 
     # ============================================================
-    # 4. Create SSG directory
+    # 7. Create SSG directory
     # ============================================================
 
     - name: Create SSG content directory
@@ -102,7 +141,7 @@
 
 
     # ============================================================
-    # 5. Check whether Ubuntu 24.04 datastream exists
+    # 8. Check whether Ubuntu 24.04 datastream exists
     # ============================================================
 
     - name: Check Ubuntu 24.04 SSG datastream
@@ -112,7 +151,7 @@
 
 
     # ============================================================
-    # 6. Download upstream SSG content
+    # 9. Download upstream SSG content
     # ============================================================
 
     - name: Download SCAP Security Guide
@@ -125,7 +164,7 @@
 
 
     # ============================================================
-    # 7. Extract Ubuntu 24.04 datastream
+    # 10. Extract Ubuntu 24.04 datastream
     # ============================================================
 
     - name: Extract Ubuntu 24.04 SSG datastream
@@ -139,7 +178,7 @@
 
 
     # ============================================================
-    # 8. Verify datastream
+    # 11. Verify datastream
     # ============================================================
 
     - name: Verify Ubuntu 24.04 datastream
@@ -159,7 +198,7 @@
 
 
     # ============================================================
-    # 9. Display fixed scan configuration
+    # 12. Display fixed scan configuration
     # ============================================================
 
     - name: Display scan configuration
@@ -172,7 +211,7 @@
 
 
     # ============================================================
-    # 10. Verify CIS Level 1 profile exists
+    # 13. Verify CIS Level 1 profile exists
     # ============================================================
 
     - name: Check CIS Level 1 profile
@@ -192,7 +231,7 @@
 
 
     # ============================================================
-    # 11. Create scan directory
+    # 14. Create scan directory
     # ============================================================
 
     - name: Create OpenSCAP scan directory
@@ -205,7 +244,7 @@
 
 
     # ============================================================
-    # 12. Remove previous reports
+    # 15. Remove previous reports
     # ============================================================
 
     - name: Remove previous XML result
@@ -220,7 +259,7 @@
 
 
     # ============================================================
-    # 13. Run CIS Level 1 scan
+    # 16. Run CIS Level 1 scan
     # ============================================================
 
     - name: Run Ubuntu 24.04 CIS Level 1 assessment
@@ -238,11 +277,12 @@
       # 0 = scan completed without failures
       # 2 = scan completed with findings
       # Other values = execution/error condition
+
       failed_when: oscap_scan.rc not in [0, 2]
 
 
     # ============================================================
-    # 14. Display scan output
+    # 17. Display scan output
     # ============================================================
 
     - name: Display OpenSCAP scan output
@@ -251,7 +291,7 @@
 
 
     # ============================================================
-    # 15. Display OpenSCAP warnings/errors
+    # 18. Display OpenSCAP warnings/errors
     # ============================================================
 
     - name: Display OpenSCAP stderr
@@ -263,7 +303,7 @@
 
 
     # ============================================================
-    # 16. Display scan return code
+    # 19. Display scan return code
     # ============================================================
 
     - name: Display OpenSCAP return code
@@ -272,7 +312,7 @@
 
 
     # ============================================================
-    # 17. Verify XML result
+    # 20. Verify XML result
     # ============================================================
 
     - name: Check XML result
@@ -282,7 +322,7 @@
 
 
     # ============================================================
-    # 18. Verify HTML report
+    # 21. Verify HTML report
     # ============================================================
 
     - name: Check HTML report
@@ -292,7 +332,7 @@
 
 
     # ============================================================
-    # 19. Validate reports
+    # 22. Validate reports
     # ============================================================
 
     - name: Verify reports were generated
@@ -306,7 +346,7 @@
 
 
     # ============================================================
-    # 20. Display report information
+    # 23. Display report information
     # ============================================================
 
     - name: Display generated report information
@@ -328,7 +368,7 @@
 
 
     # ============================================================
-    # 21. Fetch XML report to Semaphore
+    # 24. Fetch XML report to Semaphore
     # ============================================================
 
     - name: Fetch XML results to Semaphore
@@ -339,7 +379,7 @@
 
 
     # ============================================================
-    # 22. Fetch HTML report to Semaphore
+    # 25. Fetch HTML report to Semaphore
     # ============================================================
 
     - name: Fetch HTML report to Semaphore
@@ -350,7 +390,7 @@
 
 
     # ============================================================
-    # 23. Final status
+    # 26. Final status
     # ============================================================
 
     - name: Assessment completed
